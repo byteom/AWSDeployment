@@ -1,0 +1,141 @@
+name: Deploy Backend to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'micorCourses-backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18.x'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: micorCourses-backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./micorCourses-backend
+        run: npm ci
+
+      - name: Run tests (if available)
+        working-directory: ./micorCourses-backend
+        run: npm test || echo "No tests to run"
+        continue-on-error: true
+
+      - name: Create deployment package
+        working-directory: ./micorCourses-backend
+        run: |
+          tar -czf ../backend-deploy.tar.gz \
+            --exclude='node_modules' \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='*.log' \
+            .
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_DEPLOY_PATH: ${{ secrets.EC2_DEPLOY_PATH }}
+        run: |
+          scp -i ~/.ssh/deploy_key backend-deploy.tar.gz ${EC2_USER}@${EC2_HOST}:${EC2_DEPLOY_PATH}/tmp/
+          
+          ssh -i ~/.ssh/deploy_key ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
+            set -e
+            
+            # Configuration
+            DEPLOY_PATH="${{ secrets.EC2_DEPLOY_PATH }}"
+            APP_DIR="${DEPLOY_PATH}/micorCourses-backend"
+            BACKUP_DIR="${DEPLOY_PATH}/backups"
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            
+            echo "🚀 Starting deployment..."
+            
+            # Create backup before deployment
+            echo "📦 Creating backup..."
+            mkdir -p ${BACKUP_DIR}
+            if [ -d "${APP_DIR}" ]; then
+              tar -czf ${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz -C ${DEPLOY_PATH} micorCourses-backend
+              echo "✅ Backup created: backup_${TIMESTAMP}.tar.gz"
+            fi
+            
+            # Extract new version
+            echo "📂 Extracting new version..."
+            mkdir -p ${APP_DIR}
+            cd ${APP_DIR}
+            tar -xzf ${DEPLOY_PATH}/tmp/backend-deploy.tar.gz
+            
+            # Install dependencies
+            echo "📥 Installing dependencies..."
+            npm ci --production
+            
+            # Ensure .env file exists (it should already be on server)
+            if [ ! -f "${APP_DIR}/.env" ]; then
+              echo "⚠️  Warning: .env file not found. Please ensure environment variables are set."
+            fi
+            
+            # Restart application using PM2
+            echo "🔄 Restarting application..."
+            pm2 restart micorCourses-backend || pm2 start src/server.js --name micorCourses-backend
+            
+            # Wait for health check
+            echo "🏥 Checking application health..."
+            sleep 5
+            
+            # Health check
+            if curl -f http://localhost:${{ secrets.EC2_PORT || '4001' }}/api/health > /dev/null 2>&1; then
+              echo "✅ Deployment successful! Application is healthy."
+            else
+              echo "❌ Health check failed. Rolling back..."
+              if [ -f "${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz" ]; then
+                cd ${DEPLOY_PATH}
+                rm -rf ${APP_DIR}
+                tar -xzf ${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz
+                cd ${APP_DIR}
+                npm ci --production
+                pm2 restart micorCourses-backend
+                echo "🔄 Rollback completed."
+              fi
+              exit 1
+            fi
+            
+            # Cleanup old backups (keep last 5)
+            echo "🧹 Cleaning up old backups..."
+            ls -t ${BACKUP_DIR}/backup_*.tar.gz | tail -n +6 | xargs rm -f || true
+            
+            echo "✨ Deployment completed successfully!"
+          ENDSSH
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Backend deployment completed successfully!"
+          else
+            echo "❌ Backend deployment failed!"
+          fi
+

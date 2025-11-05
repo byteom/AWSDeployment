@@ -1,0 +1,103 @@
+# Nginx Configuration for MicroCourses Backend
+# Location: /etc/nginx/sites-available/micorCourses-backend
+# After creating this file, create symlink: sudo ln -s /etc/nginx/sites-available/micorCourses-backend /etc/nginx/sites-enabled/
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=general_limit:10m rate=30r/s;
+
+# Upstream backend (for load balancing multiple instances)
+upstream backend {
+    least_conn;
+    server localhost:4001 max_fails=3 fail_timeout=30s;
+    # Add more servers for load balancing:
+    # server localhost:4002 max_fails=3 fail_timeout=30s;
+    # server localhost:4003 max_fails=3 fail_timeout=30s;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name YOUR_DOMAIN_OR_IP;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    
+    # Increase body size limit for file uploads
+    client_max_body_size 10M;
+    client_body_buffer_size 128k;
+    
+    # Timeouts
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss;
+    
+    # Health check endpoint (no rate limiting)
+    location /api/health {
+        proxy_pass http://backend/api/health;
+        access_log off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # API endpoints with rate limiting
+    location /api {
+        limit_req zone=api_limit burst=20 nodelay;
+        
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        
+        # Buffering
+        proxy_buffering on;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+        proxy_busy_buffers_size 8k;
+    }
+    
+    # Root location
+    location / {
+        limit_req zone=general_limit burst=50 nodelay;
+        
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Error pages
+    error_page 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+    
+    # Logging
+    access_log /var/log/nginx/micorCourses-backend-access.log;
+    error_log /var/log/nginx/micorCourses-backend-error.log;
+}
+
+# HTTPS configuration (configured by Certbot)
+# After running certbot, it will automatically add SSL configuration here
+

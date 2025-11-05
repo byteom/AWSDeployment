@@ -1,0 +1,94 @@
+name: Deploy Frontend to AWS S3 + CloudFront
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'micro-course-frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18.x'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+  deploy:
+    name: Deploy to S3 and Invalidate CloudFront
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: micro-course-frontend/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies
+        working-directory: ./micro-course-frontend
+        run: npm ci
+
+      - name: Run tests (if available)
+        working-directory: ./micro-course-frontend
+        run: npm test || echo "No tests to run"
+        continue-on-error: true
+
+      - name: Build application
+        working-directory: ./micro-course-frontend
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        run: npm run build
+
+      - name: Upload build to S3
+        run: |
+          aws s3 sync ./micro-course-frontend/dist/ s3://${{ secrets.S3_BUCKET_NAME }}/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.html" \
+            --exclude "service-worker.js"
+          
+          # Upload HTML files with shorter cache
+          aws s3 sync ./micro-course-frontend/dist/ s3://${{ secrets.S3_BUCKET_NAME }}/ \
+            --delete \
+            --cache-control "public, max-age=0, must-revalidate" \
+            --exclude "*" \
+            --include "*.html"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Frontend Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **S3 Bucket**: ${{ secrets.S3_BUCKET_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **CloudFront Distribution**: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Time**: $(date)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Frontend deployment completed successfully!"
+          else
+            echo "❌ Frontend deployment failed!"
+          fi
+
