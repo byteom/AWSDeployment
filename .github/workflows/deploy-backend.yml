@@ -61,6 +61,7 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_DEPLOY_PATH: ${{ secrets.EC2_DEPLOY_PATH }}
+          EC2_PORT: ${{ secrets.EC2_PORT || '4001' }}
         run: |
           scp -i ~/.ssh/deploy_key backend-deploy.tar.gz ${EC2_USER}@${EC2_HOST}:${EC2_DEPLOY_PATH}/tmp/
           
@@ -107,7 +108,8 @@ jobs:
             sleep 5
             
             # Health check
-            if curl -f http://localhost:${{ secrets.EC2_PORT || '4001' }}/api/health > /dev/null 2>&1; then
+            PORT=${EC2_PORT:-4001}
+            if curl -f http://localhost:${PORT}/api/health > /dev/null 2>&1; then
               echo "✅ Deployment successful! Application is healthy."
             else
               echo "❌ Health check failed. Rolling back..."
