@@ -40,3 +40,7 @@ GITHUB_SECRETS_SETUP.md
 ONE_COMMAND_DEPLOY.md
 QUICK_START.md
 SETUP_SUMMARY.md
+aws-deployment-key.pem
+fix_connection_issue.md
+fix_nginx_port_80.md
+test_api.md
