@@ -23,7 +23,9 @@ app.use(helmet());
 const baseAllowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
-  'https://main.dj5qng0bgpof6.amplifyapp.com', 
+  'https://main.dj5qng0bgpof6.amplifyapp.com',
+  'https://api.certifyo.tech',
+  'http://api.certifyo.tech',
   'https://micro-course-frontend-2n2o-7gar33vtd-byteoms-projects.vercel.app',
   'https://microocourse-frontendd.vercel.app',
   process.env.CORS_ORIGINS
