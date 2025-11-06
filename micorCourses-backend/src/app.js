@@ -18,10 +18,12 @@ const app = express();
 // Security middleware
 app.use(helmet());
 
+// ✅ DEFINE CORS CONFIG FIRST (before using it!)
 // Dynamic CORS allowlist (supports env var, localhost, and Vercel preview domains)
 const baseAllowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
+  'https://main.dj5qng0bgpof6.amplifyapp.com', 
   'https://micro-course-frontend-2n2o-7gar33vtd-byteoms-projects.vercel.app',
   'https://microocourse-frontendd.vercel.app',
   process.env.CORS_ORIGINS
@@ -53,9 +55,12 @@ const corsOptions = {
   optionsSuccessStatus: 204
 };
 
+// ✅ NOW apply CORS middleware (after defining corsOptions)
 app.use(cors(corsOptions));
+
 // Ensure preflight works for all routes in various hosting setups
 app.options('*', cors(corsOptions));
+
 app.use(cookieParser());
 
 // Rate limiting
